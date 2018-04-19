@@ -2,7 +2,7 @@ package timeusage
 
 import java.nio.file.Paths
 
-import org.apache.spark.sql._
+import org.apache.spark.sql.{DataFrame, _}
 import org.apache.spark.sql.types._
 
 /** Main class */
@@ -62,15 +62,22 @@ object TimeUsage {
     *         have type Double. None of the fields are nullable.
     * @param columnNames Column names of the DataFrame
     */
-  def dfSchema(columnNames: List[String]): StructType =
-    ???
+  def dfSchema(columnNames: List[String]): StructType = {
+    val head = StructField(columnNames.head, DataTypes.StringType, nullable = false)
+    val tail = columnNames.tail.map(StructField(_, DataTypes.DoubleType, nullable = false))
+    StructType(head :: tail)
+  }
 
 
   /** @return An RDD Row compatible with the schema produced by `dfSchema`
     * @param line Raw fields
     */
-  def row(line: List[String]): Row =
-    ???
+  def row(line: List[String]): Row = {
+    val head = line.head
+    val tail = line.tail.map(_.toDouble)
+    Row(head :: tail:_*)
+  }
+
 
   /** @return The initial data frame columns partitioned in three groups: primary needs (sleeping, eating, etc.),
     *         work and other (leisure activities)
@@ -88,7 +95,12 @@ object TimeUsage {
     *    “t10”, “t12”, “t13”, “t14”, “t15”, “t16” and “t18” (those which are not part of the previous groups only).
     */
   def classifiedColumns(columnNames: List[String]): (List[Column], List[Column], List[Column]) = {
-    ???
+    columnNames.foldLeft((List.empty[Column], List.empty[Column], List.empty[Column])) {
+      case ((primary,w,l), Primary(c)) => (col(c) :: primary, w, l)
+      case ((p,working,l), Working(c)) => (p, col(c) :: working, l)
+      case ((p,w,leisure), Leisure(c)) => (p, w, col(c) :: leisure)
+      case skip => skip._1
+    }
   }
 
   /** @return a projection of the initial DataFrame such that all columns containing hours spent on primary needs
@@ -131,17 +143,18 @@ object TimeUsage {
     // more sense for our use case
     // Hint: you can use the `when` and `otherwise` Spark functions
     // Hint: don’t forget to give your columns the expected name with the `as` method
-    val workingStatusProjection: Column = ???
-    val sexProjection: Column = ???
-    val ageProjection: Column = ???
+    val workingStatusProjection: Column = when($"telfs" between(1, 2), "working") otherwise "not working" as "working"
+    val sexProjection: Column = when($"tesex" === 1, "male") otherwise "female" as "sex"
+    val ageProjection: Column = when($"teage" between(15, 22), "young") when ($"teage" between(23, 55), "active") otherwise "elder" as "age"
+
 
     // Create columns that sum columns of the initial dataset
     // Hint: you want to create a complex column expression that sums other columns
     //       by using the `+` operator between them
     // Hint: don’t forget to convert the value to hours
-    val primaryNeedsProjection: Column = ???
-    val workProjection: Column = ???
-    val otherProjection: Column = ???
+    val primaryNeedsProjection: Column = primaryNeedsColumns.reduce(_+_) / 60 as "primaryNeeds"
+    val workProjection: Column = workColumns.reduce(_+_) / 60 as "work"
+    val otherProjection: Column = otherColumns.reduce(_+_) / 60 as "other"
     df
       .select(workingStatusProjection, sexProjection, ageProjection, primaryNeedsProjection, workProjection, otherProjection)
       .where($"telfs" <= 4) // Discard people who are not in labor force
@@ -165,7 +178,13 @@ object TimeUsage {
     * Finally, the resulting DataFrame should be sorted by working status, sex and age.
     */
   def timeUsageGrouped(summed: DataFrame): DataFrame = {
-    ???
+    summed
+      .groupBy($"working", $"sex", $"age")
+      .sum("primaryNeeds", "work", "other")
+      .select($"working", $"sex", $"age",
+        $"sum(primaryNeeds)" / 60 as "primaryNeeds",
+        $"sum(work)" / 60 as "work",
+        $"sum(other)" / 60 as "other")
   }
 
   /**
@@ -206,7 +225,6 @@ object TimeUsage {
     * Hint: you should use the `groupByKey` and `typed.avg` methods.
     */
   def timeUsageGroupedTyped(summed: Dataset[TimeUsageRow]): Dataset[TimeUsageRow] = {
-    import org.apache.spark.sql.expressions.scalalang.typed
     ???
   }
 }
